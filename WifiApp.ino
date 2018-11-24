@@ -6,34 +6,125 @@ SoftwareSerial esp8266(2,3);
 #define DEBUG true
 #define STORAGE_LUX_ADDR 0
 
-int ledPin = 10;
+int fullRangePin = 9, coolWhiteLedPin = 10;
 int relayPin1 = 12, relayPin2 = 8;
 char okCode [] = "OK", ipdCode [] = "+IPD,", qMark [] = "?";
 const unsigned int MAX_BRIGHTNESS = 255;
 
 int ledBrightnessLevel = 0;
 int light = 0;
-int eeAddress = 0; 
+int eeAddress = 0;
+
+struct Led {
+  int brightness;
+  int address;
+  int pin;
+};
+
+struct Relay {
+  int status;
+  int address;
+  int pin;
+};
+
+void* coolLed;
+void* frLed;
+
+void ledPin(void* ctrl) {
+  Led* led = (Led*)ctrl;
+  pinMode(led->pin, OUTPUT);
+}
+
+void ledChangeBrightness(void *ctrl){
+  Led* led = (Led*) ctrl;
+  if(led->brightness >= 0 && led->brightness <= MAX_BRIGHTNESS) {
+    analogWrite(led->pin, led->brightness);
+    delay(50); 
+  }
+}
+
+void setupCoolLed()
+{
+  Led* led = new Led();
+  led->pin = 10;
+  led->address = 10;
+  ledPin(led);
+  coolLed = led;
+
+  retainer(led);
+}
+
+void setupFrLed()
+{
+  Led* led = new Led();
+  led->pin = 9;
+  led->address = 10;
+  ledPin(led);
+  frLed = led;
+
+  retainer(led);
+}
+
+void retainer(void* ctrl)
+{
+  Led* led = (Led*) ctrl;  
+  EEPROM.get(led->address, light);  
+
+  //Detect if there is settings
+  if(light > 0)
+  {
+    handleBrightness(led, light);
+  } else {
+    handleBrightness(led, 1);
+  }
+
+  //Reset
+  light = 0;
+}
+
+void handleBrightness(void *ctrl, int value)
+{
+  Led* led = (Led*) ctrl;
+  if(value == led->brightness) {
+    return value;
+  }
+  
+  if(value > led->brightness) {
+    for(led->brightness; led->brightness <= value; led->brightness++) {
+      ledChangeBrightness(led);
+    }    
+  }
+
+  if(led->brightness > value) {
+    for(led->brightness; led->brightness >= value; led->brightness--) {
+      ledChangeBrightness(led);
+    }
+  }
+
+  //Store the lux
+  EEPROM.put(led->address, led->brightness);
+}
+
+int brightness(int value) {
+    if(value < 0)
+      return 0;
+
+    float b = (value * MAX_BRIGHTNESS) / 100;    
+    return (int) b;
+}
 
 //Setup code for the pin-outs/pin-ins
 void setup()
-{
-  //Setup the pin as Output
-  pinMode(ledPin, OUTPUT);
+{  
   pinMode(relayPin1, OUTPUT);
   pinMode(relayPin2, OUTPUT);
   pinMode(LED_BUILTIN, OUTPUT);
 
+  setupCoolLed();
+  setupFrLed();  
+
   digitalWrite(relayPin1, HIGH); 
   digitalWrite(relayPin2, HIGH); 
-
-  EEPROM.get(eeAddress, light);
-  if(light > 0)
-  {
-    ledBrightnessLevel = changeBrightness(light, true);
-  } else {
-    changeBrightness(1, true);
-  } 
   
   Serial.begin(9600);
   esp8266.begin(9600);  
@@ -58,7 +149,6 @@ void setup()
   digitalWrite(LED_BUILTIN, HIGH);  
 }
 
-
 void loop() 
 {
   if (esp8266.available()) {
@@ -76,11 +166,11 @@ void loop()
       //move servo1 to desired angle
       if(command == "led") {
         if(value == 0) {
-           changeBrightness(0, true);
+           handleBrightness(coolLed, 0);
         }
         
         if(value == 1) {           
-           changeBrightness(MAX_BRIGHTNESS, true);
+           handleBrightness(coolLed, MAX_BRIGHTNESS);
         }                          
       }
 
@@ -93,13 +183,22 @@ void loop()
       }
 
       //Brightness as percentage
-      if(command == "pct" && (value >= 0 && value <= 100)) {        
-        changeBrightness(brightness(value), true);
+      if(command == "ct1" && (value >= 0 && value <= 100)) {
+        handleBrightness(coolLed, brightness(value));
+      }
+
+      if(command == "ct2" && (value >= 0 && value <= 100)) {
+        handleBrightness(frLed, brightness(value));
       }
 
       //Brightness as direct analog
-      if(command == "lux" && (value >= 0 && value <= MAX_BRIGHTNESS)) {
-        changeBrightness(value, true);
+      if(command == "lx1" && (value >= 0 && value <= MAX_BRIGHTNESS)) {
+        handleBrightness(coolLed, value);         
+      }
+
+      //Brightness as direct analog
+      if(command == "lx2" && (value >= 0 && value <= MAX_BRIGHTNESS)) {
+        handleBrightness(frLed, value);         
       }
     }
   }
@@ -124,64 +223,4 @@ String esp8266Data(String command, const int timeout, boolean debug)
     Serial.print(response);
   }
   return response;
-}
-
-int brightness(int value) {
-    if(value < 0)
-      return 0;
-
-    float b = (value * MAX_BRIGHTNESS) / 100;    
-    return (int) b;
-}
-
-void changePWMLed()
-{
-    if(ledBrightnessLevel >= 0 && ledBrightnessLevel <= MAX_BRIGHTNESS) {
-      analogWrite(ledPin, ledBrightnessLevel);
-      delay(50); 
-    }    
-}
-
-int changeBrightness(int newBrightnessLevel, bool store)
-{
-  if(newBrightnessLevel == ledBrightnessLevel) {
-    return newBrightnessLevel;
-  }
-  
-  if(newBrightnessLevel > ledBrightnessLevel) {
-    return increaseBrightness(newBrightnessLevel, store);
-  }
-
-  if(ledBrightnessLevel > newBrightnessLevel) {
-    return decreaseBrightness(newBrightnessLevel, store);
-  }
-}
-
-int increaseBrightness(int newBrightness, bool store)
-{
-  for(ledBrightnessLevel; ledBrightnessLevel <= newBrightness; ledBrightnessLevel++) {
-    changePWMLed();
-  }
-
-  if(store)
-    storeLux();
-
-  return ledBrightnessLevel;
-}
-
-int decreaseBrightness(int newBrightness, bool store)
-{
-  for(ledBrightnessLevel; ledBrightnessLevel >= newBrightness; ledBrightnessLevel--) {
-    changePWMLed();
-  }
-
-  if(store)
-    storeLux();
-    
-  return ledBrightnessLevel;
-}
-
-void storeLux()
-{
-  EEPROM.put(eeAddress, ledBrightnessLevel);
 }
