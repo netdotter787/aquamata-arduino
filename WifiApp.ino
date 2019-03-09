@@ -2,11 +2,26 @@
 #include <EEPROM.h>
 #include <Wire.h>
 
-SoftwareSerial esp8266(2,3);
-
 #define DEBUG true
 #define STORAGE_LUX_ADDR 0
 #define DS3231_I2C_ADDRESS 0x68
+
+#define FULL_RANGE_LED_PIN 9
+#define FULL_RANGE_LED_ADDRESS 9
+#define FULL_RANGE_MAX_BRIGHTNESS 125
+
+#define WHITE_LED_PIN 10
+#define WHITE_LED_ADDRESS 10
+#define WHITE_LED_MAX_BRIGHTNESS 255
+
+#define MAX_BRIGHTNESS 255
+
+#define RELAY_PIN_1 12
+#define RELAY_PIN_2 8
+#define RELAY_PIN_3 8
+#define RELAY_PIN_4 8
+
+SoftwareSerial esp8266(2,3);
 
 int fullRangePin = 9, coolWhiteLedPin = 10;
 int relayPin1 = 12, relayPin2 = 8;
